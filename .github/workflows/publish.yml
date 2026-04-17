@@ -136,6 +136,33 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm certificate.p12
 
+      - name: Pre-build cargo check (capture compile errors)
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          if [ -n "${{ matrix.rust_targets }}" ]; then
+            TARGET_FLAG="--target ${{ matrix.rust_targets }}"
+          else
+            TARGET_FLAG=""
+          fi
+          echo "Running: cargo check --release $TARGET_FLAG"
+          cargo check --release $TARGET_FLAG 2>&1 | tee cargo-check-output.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ "$EXIT" != "0" ]; then
+            echo ""
+            echo "::group::Cargo errors"
+            grep -A 3 "^error\[" cargo-check-output.txt || true
+            grep "^error:" cargo-check-output.txt || true
+            echo "::endgroup::"
+            # Surface the first 10 errors as GitHub annotations
+            grep "^error" cargo-check-output.txt | head -10 | while IFS= read -r line; do
+              clean=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+              echo "::error::$clean"
+            done
+          fi
+          exit $EXIT
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
