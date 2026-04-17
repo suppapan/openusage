@@ -266,28 +266,37 @@ jobs:
         if: success()
         shell: bash
         run: |
-          set -e
+          set +e  # keep going if any copy/find fails
           if [ -n "${{ matrix.rust_targets }}" ]; then
             BUNDLE_DIR="src-tauri/target/${{ matrix.rust_targets }}/release/bundle"
           else
             BUNDLE_DIR="src-tauri/target/release/bundle"
           fi
           echo "Bundle dir: $BUNDLE_DIR"
-          ls -R "$BUNDLE_DIR" || true
+          if [ -d "$BUNDLE_DIR" ]; then
+            echo "::group::Bundle contents"
+            find "$BUNDLE_DIR" -maxdepth 4 -mindepth 1
+            echo "::endgroup::"
+          fi
           mkdir -p release-assets
-          # Copy installers / images
-          find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
-            -name '*.dmg' \
-            -o -name '*.msi' \
-            -o -name '*-setup.exe' \
-            -o -name '*.deb' \
-            -o -name '*.rpm' \
-            -o -name '*.AppImage' \
-          \) -exec cp -v {} release-assets/ \; 2>/dev/null || true
+          # Copy installers / images if present
+          if [ -d "$BUNDLE_DIR" ]; then
+            find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
+              -name '*.dmg' \
+              -o -name '*.msi' \
+              -o -name '*-setup.exe' \
+              -o -name '*.deb' \
+              -o -name '*.rpm' \
+              -o -name '*.AppImage' \
+            \) -exec cp -v {} release-assets/ \;
+          fi
           # Zip up the .app bundle for macOS (unsigned builds skip DMG creation)
-          if [[ "${{ runner.os }}" == "macOS" ]]; then
-            APP_DIR=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' | head -1)
-            if [[ -n "$APP_DIR" && -d "$APP_DIR" ]]; then
+          if [[ "${{ runner.os }}" == "macOS" && -d "$BUNDLE_DIR/macos" ]]; then
+            APP_DIR=""
+            for candidate in "$BUNDLE_DIR/macos"/*.app; do
+              if [ -d "$candidate" ]; then APP_DIR="$candidate"; break; fi
+            done
+            if [ -n "$APP_DIR" ]; then
               ARCH_SUFFIX="${{ matrix.rust_targets }}"
               ARCH_SUFFIX="${ARCH_SUFFIX%-apple-darwin}"
               APP_NAME=$(basename "$APP_DIR" .app)
@@ -295,9 +304,15 @@ jobs:
               echo "Zipping $APP_DIR -> release-assets/$ZIP_NAME"
               (cd "$(dirname "$APP_DIR")" && zip -qry "/tmp/$ZIP_NAME" "$(basename "$APP_DIR")")
               mv "/tmp/$ZIP_NAME" "release-assets/$ZIP_NAME"
+            else
+              echo "No .app bundle found in $BUNDLE_DIR/macos"
             fi
           fi
+          echo "::group::release-assets"
           ls -la release-assets/ || true
+          echo "::endgroup::"
+          # Don't fail the job just because a bundle format is missing
+          exit 0
 
       - name: Upload bundles to release
         if: success()
