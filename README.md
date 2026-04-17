@@ -132,32 +132,69 @@ In the OpenUsage desktop app:
 
 The dashboard will automatically poll the relay every 60 seconds and display remote machine data.
 
-### 3. Run Agents on Remote Machines
+### 3. Install the Agent on Remote Machines (one-liner)
 
-Install and run the agent on each remote machine:
+Paste one of these on the remote machine — it downloads the binary, prompts for the token and relay URL, and installs as a background service.
 
+**Linux / macOS:**
 ```bash
-# Build from source
-cargo build -p openusage-agent --release
-
-# Run (reads from local OpenUsage HTTP API on port 6736)
-openusage-agent \
-  --token YOUR_TOKEN_HERE \
-  --relay http://your-server:8090
-
-# Optional flags
-openusage-agent \
-  --token YOUR_TOKEN_HERE \
-  --relay http://your-server:8090 \
-  --machine-name "Ubuntu Server" \  # Custom display name (default: hostname)
-  --interval 300 \                  # Push interval in seconds (default: 300)
-  --cache-file ~/.local/share/com.sunstory.openusage/usage-api-cache.json  # Read from cache file instead of API
+curl -fsSL https://github.com/suppapan/openusage/releases/latest/download/install-agent.sh | bash
 ```
 
-**Agent data sources** (pick one):
+**Windows (PowerShell as user):**
+```powershell
+iwr https://github.com/suppapan/openusage/releases/latest/download/install-agent.ps1 | iex
+```
 
-- **Local API** (default): Reads from a running OpenUsage instance's HTTP API at `http://127.0.0.1:6736`. Install the full OpenUsage app on the machine and the agent forwards its data.
-- **Cache file**: Reads directly from the `usage-api-cache.json` file. Use `--cache-file` flag. Useful when the full app is running but you want to avoid HTTP.
+Or non-interactive (pass token + relay as flags):
+
+```bash
+# Linux / macOS
+curl -fsSL https://github.com/suppapan/openusage/releases/latest/download/install-agent.sh | bash -s -- \
+  --token YOUR_SYNC_TOKEN \
+  --relay https://relay.example.com:8090
+```
+
+```powershell
+# Windows PowerShell
+$env:OPENUSAGE_TOKEN = "YOUR_SYNC_TOKEN"
+$env:OPENUSAGE_RELAY = "https://relay.example.com:8090"
+iwr https://github.com/suppapan/openusage/releases/latest/download/install-agent.ps1 | iex
+```
+
+**What the installer does:**
+- Downloads the platform-appropriate `openusage-agent` binary from the latest release
+- Installs to `/usr/local/bin` (Linux/macOS) or `%LOCALAPPDATA%\OpenUsage` (Windows)
+- Registers a background service: `systemd` (Linux), `launchd` (macOS), or a Scheduled Task (Windows)
+- Starts pushing data to the relay every 5 minutes
+
+**Installer options:**
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--token` | — | Sync token from dashboard (prompted if omitted) |
+| `--relay` | — | Relay URL (prompted if omitted) |
+| `--machine-name` | hostname | Display name shown in the dashboard |
+| `--interval` | `300` | Push interval in seconds |
+| `--no-service` | — | Install the binary only; don't register a service |
+
+### Manual agent run (without installer)
+
+Build from source and run directly:
+
+```bash
+cargo build -p openusage-agent --release
+
+# Runs in foreground, reads from local OpenUsage HTTP API on port 6736
+openusage-agent \
+  --token YOUR_TOKEN_HERE \
+  --relay https://relay.example.com:8090
+```
+
+**Agent data sources:**
+
+- **Local API** (default): Reads from a running OpenUsage instance's HTTP API at `http://127.0.0.1:6736`. The agent just forwards cached data.
+- **Cache file**: Pass `--cache-file <PATH>` to read directly from `usage-api-cache.json`. Useful when you want to skip HTTP.
 
 ### 4. View Aggregated Data
 
@@ -165,30 +202,6 @@ Once agents are pushing data, the dashboard overview page shows two tabs:
 
 - **This Machine** — your local usage (default view)
 - **All Machines** — usage from all connected machines, grouped by machine with badges showing machine names and last-seen timestamps
-
-### Running the Agent as a Service
-
-On Linux (systemd):
-
-```ini
-# /etc/systemd/system/openusage-agent.service
-[Unit]
-Description=OpenUsage Agent
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/openusage-agent --token YOUR_TOKEN --relay http://your-server:8090
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl enable --now openusage-agent
-```
 
 ### Security Notes
 

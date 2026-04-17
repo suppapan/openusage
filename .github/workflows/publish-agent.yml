@@ -1,0 +1,78 @@
+name: Publish Agent
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-agent:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset_name: openusage-agent-linux-x86_64
+            binary_name: openusage-agent
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            asset_name: openusage-agent-macos-x86_64
+            binary_name: openusage-agent
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            asset_name: openusage-agent-macos-aarch64
+            binary_name: openusage-agent
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_name: openusage-agent-windows-x86_64.exe
+            binary_name: openusage-agent.exe
+    runs-on: ${{ matrix.platform }}
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: agent-${{ matrix.target }}
+
+      - name: Build agent
+        run: cargo build --release --target ${{ matrix.target }} -p openusage-agent
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${{ matrix.asset_name }}"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: ${{ matrix.asset_name }}
+          fail_on_unmatched_files: true
+
+  publish-install-scripts:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload install scripts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            scripts/install/install-agent.sh
+            scripts/install/install-agent.ps1
+          fail_on_unmatched_files: true
