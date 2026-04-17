@@ -16,6 +16,7 @@ import { type PluginContextAction } from "@/components/side-nav"
 import { useAppPluginStore } from "@/stores/app-plugin-store"
 import { useAppPreferencesStore } from "@/stores/app-preferences-store"
 import { useAppUiStore } from "@/stores/app-ui-store"
+import { useSync } from "@/hooks/app/use-sync"
 
 const TRAY_PROBE_DEBOUNCE_MS = 500
 const TRAY_SETTINGS_DEBOUNCE_MS = 2000
@@ -74,6 +75,8 @@ function App() {
       setStartOnLogin: state.setStartOnLogin,
     }))
   )
+
+  useSync()
 
   const scheduleProbeTrayUpdateRef = useRef<() => void>(() => {})
   const handleProbeResult = useCallback(() => {

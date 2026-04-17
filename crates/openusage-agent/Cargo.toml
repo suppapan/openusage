@@ -1,0 +1,20 @@
+[package]
+name = "openusage-agent"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "openusage-agent"
+path = "src/main.rs"
+
+[dependencies]
+openusage-shared = { path = "../openusage-shared" }
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3", features = ["formatting"] }
+log = "0.4"
+env_logger = "0.11"
+hostname = "0.4"

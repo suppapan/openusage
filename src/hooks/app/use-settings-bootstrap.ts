@@ -24,6 +24,8 @@ import {
   loadPluginSettings,
   loadResetTimerDisplayMode,
   loadStartOnLogin,
+  loadSyncEnabled,
+  loadSyncRelayUrl,
   loadThemeMode,
   normalizePluginSettings,
   savePluginSettings,
@@ -35,6 +37,7 @@ import {
   type ResetTimerDisplayMode,
   type ThemeMode,
 } from "@/lib/settings"
+import { useAppSyncStore } from "@/stores/app-sync-store"
 
 type UseSettingsBootstrapArgs = {
   setPluginSettings: (value: PluginSettings | null) => void
@@ -151,6 +154,24 @@ export function useSettingsBootstrap({
           storedMenubarIconStyle = await loadMenubarIconStyle()
         } catch (error) {
           console.error("Failed to load menubar icon style:", error)
+        }
+
+        // Load sync settings
+        try {
+          const syncEnabled = await loadSyncEnabled()
+          const syncRelayUrl = await loadSyncRelayUrl()
+          const syncStore = useAppSyncStore.getState()
+          syncStore.setSyncEnabled(syncEnabled)
+          syncStore.setRelayUrl(syncRelayUrl)
+
+          if (syncEnabled) {
+            const tokenResult = await invoke<string | null>("get_sync_token")
+            if (tokenResult) {
+              syncStore.setSyncToken(tokenResult)
+            }
+          }
+        } catch (error) {
+          console.error("Failed to load sync settings:", error)
         }
 
         if (isMounted) {

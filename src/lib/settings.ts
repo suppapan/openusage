@@ -303,3 +303,25 @@ export async function saveStartOnLogin(value: boolean): Promise<void> {
   await store.set(START_ON_LOGIN_KEY, value);
   await store.save();
 }
+
+// ─── Sync settings ──────────────────────────────────────────────────────────
+
+const SYNC_ENABLED_KEY = "syncEnabled";
+const SYNC_RELAY_URL_KEY = "syncRelayUrl";
+
+export async function loadSyncEnabled(): Promise<boolean> {
+  const stored = await store.get<unknown>(SYNC_ENABLED_KEY);
+  if (typeof stored === "boolean") return stored;
+  return false;
+}
+
+export async function loadSyncRelayUrl(): Promise<string> {
+  const stored = await store.get<unknown>(SYNC_RELAY_URL_KEY);
+  if (typeof stored === "string") return stored;
+  return "";
+}
+
+export async function saveSettingToStore(key: string, value: unknown): Promise<void> {
+  await store.set(key, value);
+  await store.save();
+}
