@@ -105,8 +105,21 @@ jobs:
           fi
         shell: bash
 
+      # Disable updater artifacts when signing key is not available
+      - name: Disable updater artifacts if no signing key
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' }}
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+            conf.bundle.createUpdaterArtifacts = false;
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));
+          "
+          echo "Updater artifacts disabled (no signing key)"
+
       - name: Import Apple Developer Certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -140,12 +153,12 @@ jobs:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_TAG }}
           releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+          prerelease: true
+          includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
           args: ${{ matrix.args }}
 
       - name: Verify updater assets uploaded
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && secrets.TAURI_SIGNING_PRIVATE_KEY != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
