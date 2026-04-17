@@ -65,9 +65,9 @@ echo ">>> OpenUsage Agent installer"
 echo "    Platform: $PLATFORM-$ARCH_TAG"
 echo "    Binary:   $BINARY_NAME"
 
-# ─── Resolve latest release ────────────────────────────────────────────────
-LATEST_URL="https://api.github.com/repos/${REPO}/releases/latest"
-TAG="$(curl -fsSL "$LATEST_URL" | grep -E '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/')"
+# ─── Resolve latest release (includes prereleases) ──────────────────────────
+TAG="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=1" \
+  | grep -E '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/')"
 if [[ -z "$TAG" ]]; then
   echo "Failed to resolve latest release tag"; exit 1
 fi

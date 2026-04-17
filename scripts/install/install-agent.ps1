@@ -31,10 +31,11 @@ $BinaryName = "openusage-agent-windows-$Arch.exe"
 Write-Host "    Platform: windows-$Arch"
 Write-Host "    Binary:   $BinaryName"
 
-# Resolve latest release
-$LatestApi = "https://api.github.com/repos/$Repo/releases/latest"
-$Release = Invoke-RestMethod -Uri $LatestApi
-$Tag = $Release.tag_name
+# Resolve latest release (includes prereleases)
+$LatestApi = "https://api.github.com/repos/$Repo/releases?per_page=1"
+$Releases = Invoke-RestMethod -Uri $LatestApi
+if (-not $Releases) { Throw "No releases found for $Repo" }
+$Tag = $Releases[0].tag_name
 Write-Host "    Release:  $Tag"
 $DownloadUrl = "https://github.com/$Repo/releases/download/$Tag/$BinaryName"
 

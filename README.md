@@ -138,19 +138,19 @@ Paste one of these on the remote machine — it downloads the binary, prompts fo
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://github.com/suppapan/openusage/releases/latest/download/install-agent.sh | bash
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash
 ```
 
 **Windows (PowerShell as user):**
 ```powershell
-iwr https://github.com/suppapan/openusage/releases/latest/download/install-agent.ps1 | iex
+iwr https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.ps1 | iex
 ```
 
 Or non-interactive (pass token + relay as flags):
 
 ```bash
 # Linux / macOS
-curl -fsSL https://github.com/suppapan/openusage/releases/latest/download/install-agent.sh | bash -s -- \
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash -s -- \
   --token YOUR_SYNC_TOKEN \
   --relay https://relay.example.com:8090
 ```
@@ -159,7 +159,7 @@ curl -fsSL https://github.com/suppapan/openusage/releases/latest/download/instal
 # Windows PowerShell
 $env:OPENUSAGE_TOKEN = "YOUR_SYNC_TOKEN"
 $env:OPENUSAGE_RELAY = "https://relay.example.com:8090"
-iwr https://github.com/suppapan/openusage/releases/latest/download/install-agent.ps1 | iex
+iwr https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.ps1 | iex
 ```
 
 **What the installer does:**
