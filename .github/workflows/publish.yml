@@ -147,8 +147,8 @@ jobs:
           else
             TARGET_FLAG=""
           fi
-          echo "Running: cargo check --release $TARGET_FLAG"
-          cargo check --release $TARGET_FLAG 2>&1 | tee cargo-check-output.txt
+          echo "Running: cargo build --release $TARGET_FLAG"
+          cargo build --release $TARGET_FLAG 2>&1 | tee cargo-check-output.txt
           EXIT=${PIPESTATUS[0]}
           echo ""
           echo "::group::Last 150 lines of cargo output"
