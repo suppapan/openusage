@@ -70,9 +70,11 @@ export function AppShell({
     <div
       ref={containerRef}
       tabIndex={-1}
-      className="flex flex-col items-center p-6 pt-1.5 bg-transparent outline-none"
+      className={`flex flex-col items-center p-6 bg-transparent outline-none ${
+        navigator.userAgent.includes("Macintosh") ? "pt-1.5" : "pt-2"
+      }`}
     >
-      <div className="tray-arrow" />
+      {navigator.userAgent.includes("Macintosh") && <div className="tray-arrow" />}
       <div
         className="relative bg-card rounded-xl overflow-hidden select-none w-full border shadow-lg flex flex-col"
         style={maxPanelHeightPx ? { maxHeight: `${maxPanelHeightPx - ARROW_OVERHEAD_PX}px` } : undefined}

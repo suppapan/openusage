@@ -4,6 +4,7 @@ mod config;
 mod local_http_api;
 mod panel;
 mod plugin_engine;
+mod sync;
 mod tray;
 #[cfg(target_os = "macos")]
 mod webkit_config;
@@ -195,10 +196,7 @@ fn init_panel(app_handle: tauri::AppHandle) {
 
 #[tauri::command]
 fn hide_panel(app_handle: tauri::AppHandle) {
-    use tauri_nspanel::ManagerExt;
-    if let Ok(panel) = app_handle.get_webview_panel("main") {
-        panel.hide();
-    }
+    panel::hide_panel(&app_handle);
 }
 
 #[tauri::command]
@@ -211,6 +209,75 @@ fn open_devtools(#[allow(unused)] app_handle: tauri::AppHandle) {
         }
     }
 }
+
+// ─── Sync commands ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn generate_sync_token(app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_store::StoreExt;
+
+    let token = sync::token::generate_token();
+    let store = app_handle
+        .store("settings.json")
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    store.set("syncToken", serde_json::json!(token));
+    let _ = store.save();
+    log::info!("Generated new sync token");
+    Ok(token)
+}
+
+#[tauri::command]
+fn get_sync_token(app_handle: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_store::StoreExt;
+
+    let store = app_handle
+        .store("settings.json")
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    let token = store
+        .get("syncToken")
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    Ok(token)
+}
+
+#[tauri::command]
+fn revoke_sync_token(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+
+    let store = app_handle
+        .store("settings.json")
+        .map_err(|e| format!("failed to open store: {}", e))?;
+    store.delete("syncToken");
+    let _ = store.save();
+    log::info!("Revoked sync token");
+    Ok(())
+}
+
+#[tauri::command]
+async fn pull_remote_machines(
+    relay_url: String,
+    token: String,
+) -> Result<openusage_shared::SyncPullResponse, String> {
+    tokio::task::spawn_blocking(move || {
+        sync::relay_client::pull_remote_machines(&relay_url, &token)
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
+}
+
+#[tauri::command]
+async fn delete_remote_machine(
+    relay_url: String,
+    token: String,
+    machine_id: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        sync::relay_client::delete_remote_machine(&relay_url, &token, &machine_id)
+    })
+    .await
+    .map_err(|e| format!("task failed: {}", e))?
+}
+
+// ─── Probe commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
 async fn start_probe_batch(
@@ -346,11 +413,24 @@ async fn start_probe_batch(
 
 #[tauri::command]
 fn get_log_path(app_handle: tauri::AppHandle) -> Result<String, String> {
-    // macOS log directory: ~/Library/Logs/{bundleIdentifier}
-    let home = dirs::home_dir().ok_or("no home dir")?;
+    let app_name = &app_handle.package_info().name;
     let bundle_id = app_handle.config().identifier.clone();
-    let log_dir = home.join("Library").join("Logs").join(&bundle_id);
-    let log_file = log_dir.join(format!("{}.log", app_handle.package_info().name));
+
+    let log_dir = if cfg!(target_os = "macos") {
+        // macOS: ~/Library/Logs/{bundleIdentifier}
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        home.join("Library").join("Logs").join(&bundle_id)
+    } else if cfg!(target_os = "windows") {
+        // Windows: %LOCALAPPDATA%/{bundleIdentifier}/logs
+        let local = dirs::data_local_dir().ok_or("no local app data dir")?;
+        local.join(&bundle_id).join("logs")
+    } else {
+        // Linux: ~/.local/share/{bundleIdentifier}/logs
+        let data = dirs::data_dir().ok_or("no data dir")?;
+        data.join(&bundle_id).join("logs")
+    };
+
+    let log_file = log_dir.join(format!("{}.log", app_name));
     Ok(log_file.to_string_lossy().to_string())
 }
 
@@ -470,11 +550,17 @@ pub fn run() {
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     let _guard = runtime.enter();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_aptabase::Builder::new("A-US-6435241436").build())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_nspanel::init())
+        .plugin(tauri_plugin_store::Builder::default().build());
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.plugin(tauri_nspanel::init());
+    }
+
+    builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .targets([
@@ -499,7 +585,12 @@ pub fn run() {
             start_probe_batch,
             list_plugins,
             get_log_path,
-            update_global_shortcut
+            update_global_shortcut,
+            generate_sync_token,
+            get_sync_token,
+            revoke_sync_token,
+            pull_remote_machines,
+            delete_remote_machine
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
