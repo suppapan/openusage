@@ -274,8 +274,8 @@ jobs:
           fi
           echo "Bundle dir: $BUNDLE_DIR"
           ls -R "$BUNDLE_DIR" || true
-          # Collect everything under the bundle dir that looks shippable
           mkdir -p release-assets
+          # Copy installers / images
           find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
             -name '*.dmg' \
             -o -name '*.msi' \
@@ -284,6 +284,19 @@ jobs:
             -o -name '*.rpm' \
             -o -name '*.AppImage' \
           \) -exec cp -v {} release-assets/ \; 2>/dev/null || true
+          # Zip up the .app bundle for macOS (unsigned builds skip DMG creation)
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            APP_DIR=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' | head -1)
+            if [[ -n "$APP_DIR" && -d "$APP_DIR" ]]; then
+              ARCH_SUFFIX="${{ matrix.rust_targets }}"
+              ARCH_SUFFIX="${ARCH_SUFFIX%-apple-darwin}"
+              APP_NAME=$(basename "$APP_DIR" .app)
+              ZIP_NAME="${APP_NAME}_${ARCH_SUFFIX}.app.zip"
+              echo "Zipping $APP_DIR -> release-assets/$ZIP_NAME"
+              (cd "$(dirname "$APP_DIR")" && zip -qry "/tmp/$ZIP_NAME" "$(basename "$APP_DIR")")
+              mv "/tmp/$ZIP_NAME" "release-assets/$ZIP_NAME"
+            fi
+          fi
           ls -la release-assets/ || true
 
       - name: Upload bundles to release
