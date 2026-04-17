@@ -143,7 +143,7 @@ pub fn init(app_handle: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg(target_os = "macos")]
 fn get_or_init_panel_impl(
     app_handle: &AppHandle,
-) -> Option<tauri_nspanel::WebviewPanel> {
+) -> Option<tauri_nspanel::PanelHandle<tauri::Wry>> {
     match app_handle.get_webview_panel("main") {
         Ok(panel) => Some(panel),
         Err(_) => {
