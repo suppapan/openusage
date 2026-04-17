@@ -282,10 +282,25 @@ jobs:
         shell: bash
         run: |
           set +e  # keep going if any copy/find fails
+          # With a Cargo workspace at the repo root, the target dir is ./target
+          # (not ./src-tauri/target). Check both in case that changes.
+          CANDIDATES=()
           if [ -n "${{ matrix.rust_targets }}" ]; then
-            BUNDLE_DIR="src-tauri/target/${{ matrix.rust_targets }}/release/bundle"
+            CANDIDATES+=("target/${{ matrix.rust_targets }}/release/bundle")
+            CANDIDATES+=("src-tauri/target/${{ matrix.rust_targets }}/release/bundle")
           else
-            BUNDLE_DIR="src-tauri/target/release/bundle"
+            CANDIDATES+=("target/release/bundle")
+            CANDIDATES+=("src-tauri/target/release/bundle")
+          fi
+          BUNDLE_DIR=""
+          for c in "${CANDIDATES[@]}"; do
+            if [ -d "$c" ]; then BUNDLE_DIR="$c"; break; fi
+          done
+          if [ -z "$BUNDLE_DIR" ]; then
+            echo "::warning::No bundle dir found. Tried: ${CANDIDATES[*]}"
+            # Dump any top-level target dirs we can find
+            find target src-tauri/target -maxdepth 3 -type d -name bundle 2>/dev/null | head -5 || true
+            exit 0
           fi
           echo "Bundle dir: $BUNDLE_DIR"
           if [ -d "$BUNDLE_DIR" ]; then
