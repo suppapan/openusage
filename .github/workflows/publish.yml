@@ -277,6 +277,11 @@ jobs:
             echo "::group::Bundle contents"
             find "$BUNDLE_DIR" -maxdepth 4 -mindepth 1
             echo "::endgroup::"
+            # Emit the listing as a warning annotation for visibility via the API
+            LISTING=$(find "$BUNDLE_DIR" -maxdepth 4 -mindepth 1 | head -40 | tr '\n' '|' | sed 's/%/%25/g')
+            echo "::warning::Bundle contents: $LISTING"
+          else
+            echo "::warning::No bundle dir at $BUNDLE_DIR"
           fi
           mkdir -p release-assets
           # Copy installers / images if present
