@@ -177,9 +177,10 @@ jobs:
           path: src-tauri/cargo-check-output.txt
           if-no-files-found: ignore
 
-      - uses: tauri-apps/tauri-action@v0
+      # Run tauri build manually so errors surface in logs
+      - name: Tauri build
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -188,22 +189,51 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_TAG }}
-          releaseDraft: false
-          prerelease: true
-          includeUpdaterJson: false
-          args: ${{ matrix.args }} --verbose
+          RUST_BACKTRACE: full
+        run: |
+          set -e
+          ARGS="${{ matrix.args }}"
+          echo ">>> Running: bunx tauri build $ARGS --verbose"
+          bunx tauri build $ARGS --verbose 2>&1 | tee tauri-build-output.txt
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload tauri build output
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-${{ matrix.platform }}-${{ strategy.job-index }}
-          path: |
-            src-tauri/target/release/build/**/output
-            src-tauri/target/**/release/build/**/output
-            src-tauri/target/**/release/deps/*.log
+          name: tauri-build-${{ matrix.platform }}-${{ strategy.job-index }}
+          path: tauri-build-output.txt
           if-no-files-found: ignore
-          retention-days: 7
+
+      # Collect bundle paths into a multi-line env var for the release uploader
+      - name: Locate bundle files
+        if: success()
+        shell: bash
+        run: |
+          set -e
+          if [ -n "${{ matrix.rust_targets }}" ]; then
+            BUNDLE_DIR="src-tauri/target/${{ matrix.rust_targets }}/release/bundle"
+          else
+            BUNDLE_DIR="src-tauri/target/release/bundle"
+          fi
+          echo "Bundle dir: $BUNDLE_DIR"
+          ls -R "$BUNDLE_DIR" || true
+          # Collect everything under the bundle dir that looks shippable
+          mkdir -p release-assets
+          find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
+            -name '*.dmg' \
+            -o -name '*.msi' \
+            -o -name '*-setup.exe' \
+            -o -name '*.deb' \
+            -o -name '*.rpm' \
+            -o -name '*.AppImage' \
+          \) -exec cp -v {} release-assets/ \; 2>/dev/null || true
+          ls -la release-assets/ || true
+
+      - name: Upload bundles to release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: true
+          files: release-assets/*
+          fail_on_unmatched_files: false
