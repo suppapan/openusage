@@ -30,6 +30,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     env:
       RELEASE_TAG: ${{ github.ref_name }}
+      HAS_TAURI_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,7 +44,6 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
-      # Linux dependencies
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -60,18 +61,21 @@ jobs:
         with:
           bun-version: "latest"
       - run: bun install
+
       - name: Bundle plugins
         run: bun run bundle:plugins
+
       - name: Verify bundled plugins
+        shell: bash
         run: |
           COUNT=$(find src-tauri/resources/bundled_plugins -maxdepth 2 -name plugin.json | wc -l | tr -d ' ')
           if [[ "$COUNT" -lt 1 ]]; then
             echo "No bundled plugins found under src-tauri/resources/bundled_plugins."
             exit 1
           fi
-        shell: bash
 
       - name: Validate release tag
+        shell: bash
         run: |
           if [[ -z "$RELEASE_TAG" ]]; then
             echo "Missing RELEASE_TAG (push a v* tag)."
@@ -81,9 +85,9 @@ jobs:
             echo "Invalid RELEASE_TAG: $RELEASE_TAG (expected vMAJOR.MINOR.PATCH)"
             exit 1
           fi
-        shell: bash
 
       - name: Validate app version matches tag
+        shell: bash
         run: |
           TAG_VERSION="${RELEASE_TAG#v}"
 
@@ -103,11 +107,9 @@ jobs:
             echo "package.json version ($PKG_VERSION) != tag version ($TAG_VERSION)"
             exit 1
           fi
-        shell: bash
 
-      # Disable updater artifacts when signing key is not available
       - name: Disable updater artifacts if no signing key
-        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' }}
+        if: env.HAS_TAURI_SIGNING_KEY == 'false'
         shell: bash
         run: |
           node -e "
@@ -116,10 +118,10 @@ jobs:
             conf.bundle.createUpdaterArtifacts = false;
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));
           "
-          echo "Updater artifacts disabled (no signing key)"
+          echo "Updater artifacts disabled (no TAURI_SIGNING_PRIVATE_KEY secret)"
 
       - name: Import Apple Developer Certificate
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE != ''
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -137,16 +139,12 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS-only signing env vars (ignored on other platforms)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         with:
@@ -154,15 +152,5 @@ jobs:
           releaseName: ${{ env.RELEASE_TAG }}
           releaseDraft: false
           prerelease: true
-          includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
-
-      - name: Verify updater assets uploaded
-        if: runner.os == 'macOS' && secrets.TAURI_SIGNING_PRIVATE_KEY != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ASSETS=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | tr -d '\r')
-
-          printf '%s\n' "$ASSETS" | grep -Fxq 'latest.json' || { echo "Missing updater manifest: latest.json"; exit 1; }
-          printf '%s\n' "$ASSETS" | grep -Eq '\.sig$' || { echo "Missing updater signatures (.sig)"; exit 1; }
