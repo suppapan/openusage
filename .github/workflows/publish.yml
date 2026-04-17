@@ -178,8 +178,11 @@ jobs:
           if-no-files-found: ignore
 
       # Run tauri build manually so errors surface in logs
-      - name: Tauri build
-        id: tauri-build
+      # Pass signing secrets only when they exist, so tauri-bundler skips codesign
+      # when they're absent (instead of failing on missing cert).
+      - name: Tauri build (signed)
+        id: tauri-build-signed
+        if: env.HAS_APPLE_CERT == 'true' || runner.os != 'macOS'
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -203,6 +206,39 @@ jobs:
             tail -n 200 tauri-build-output.txt
             echo "::endgroup::"
             # Surface specific error lines as annotations
+            {
+              grep -i "^error" tauri-build-output.txt
+              grep -i "^failed" tauri-build-output.txt
+              grep -i "unable to " tauri-build-output.txt
+              grep -i "not found" tauri-build-output.txt | head -5
+              grep -i "panicked at" tauri-build-output.txt
+              grep -E "^\s*Caused by" tauri-build-output.txt
+            } | sort -u | head -20 | while IFS= read -r line; do
+              clean=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g')
+              echo "::error::$clean"
+            done
+          fi
+          exit $EXIT
+
+      # Unsigned build path: only for macOS when no cert. Avoids passing APPLE_*
+      # env vars so tauri-bundler skips codesigning entirely.
+      - name: Tauri build (unsigned, no codesign)
+        id: tauri-build-unsigned
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT != 'true'
+        shell: bash
+        env:
+          RUST_BACKTRACE: full
+        run: |
+          set +e
+          ARGS="${{ matrix.args }}"
+          echo ">>> Running unsigned: bunx tauri build $ARGS --verbose"
+          bunx tauri build $ARGS --verbose 2>&1 | tee tauri-build-output.txt
+          EXIT=${PIPESTATUS[0]}
+          if [ "$EXIT" != "0" ]; then
+            echo ""
+            echo "::group::Last 200 lines of tauri build output"
+            tail -n 200 tauri-build-output.txt
+            echo "::endgroup::"
             {
               grep -i "^error" tauri-build-output.txt
               grep -i "^failed" tauri-build-output.txt
