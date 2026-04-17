@@ -261,6 +261,21 @@ jobs:
           path: tauri-build-output.txt
           if-no-files-found: ignore
 
+      # Emit the last 40 lines of the tauri build output as warning annotations
+      # so we can see them via the public check-runs API.
+      - name: Publish tauri build tail
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f tauri-build-output.txt ]; then
+            echo "::warning::No tauri-build-output.txt"
+            exit 0
+          fi
+          tail -n 40 tauri-build-output.txt | while IFS= read -r line; do
+            clean=$(echo "$line" | sed 's/%/%25/g; s/\r/%0D/g')
+            echo "::warning::TAUR: $clean"
+          done
+
       # Collect bundle paths into a multi-line env var for the release uploader
       - name: Locate bundle files
         if: success()
