@@ -1,11 +1,13 @@
 FROM rust:1.85-slim AS builder
 WORKDIR /app
+
+# Copy only the crates needed for the relay
 COPY crates/openusage-shared crates/openusage-shared
 COPY crates/openusage-relay crates/openusage-relay
-COPY Cargo.toml Cargo.toml
-# Create dummy src-tauri so workspace resolves (not built)
-RUN mkdir -p src-tauri/src && echo 'fn main() {}' > src-tauri/src/main.rs
-COPY src-tauri/Cargo.toml src-tauri/Cargo.toml
+
+# Create a minimal workspace that only includes relay + shared
+RUN echo '[workspace]\nmembers = ["crates/openusage-shared", "crates/openusage-relay"]\nresolver = "2"' > Cargo.toml
+
 RUN cargo build --release -p openusage-relay
 
 FROM debian:bookworm-slim
