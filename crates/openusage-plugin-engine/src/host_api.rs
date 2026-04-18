@@ -318,7 +318,7 @@ fn redact_body(body: &str) -> String {
 }
 
 /// Lightweight redaction for log messages.
-pub(crate) fn redact_log_message(msg: &str) -> String {
+pub fn redact_log_message(msg: &str) -> String {
     let mut result = msg.to_string();
     if let Ok(jwt_re) = regex_lite::Regex::new(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
     {

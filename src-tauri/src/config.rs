@@ -16,12 +16,8 @@ pub struct AppConfig {
     pub proxy: Option<ProxyConfig>,
 }
 
-/// Resolved proxy state — computed once at startup, used per-request.
-/// This avoids re-parsing or re-validating on every HTTP call.
-#[derive(Debug, Clone)]
-pub struct ResolvedProxy {
-    pub proxy: Proxy,
-}
+// Re-export the engine's type so existing call sites keep working.
+pub use openusage_plugin_engine::config::ResolvedProxy;
 
 /// Global resolved proxy: Some(active) or None(disabled).
 static RESOLVED_PROXY: OnceLock<Option<ResolvedProxy>> = OnceLock::new();
@@ -30,6 +26,12 @@ static RESOLVED_PROXY: OnceLock<Option<ResolvedProxy>> = OnceLock::new();
 /// Loaded once from disk on first call; subsequent calls are zero-cost.
 pub fn get_resolved_proxy() -> Option<&'static ResolvedProxy> {
     RESOLVED_PROXY.get_or_init(|| load_and_resolve_proxy()).as_ref()
+}
+
+/// Install our resolver into the plugin engine so its HTTP host API uses our
+/// proxy. Call once at startup before any plugin probes run.
+pub fn install_engine_resolver() {
+    openusage_plugin_engine::config::set_proxy_resolver(get_resolved_proxy);
 }
 
 /// Config file path: ~/.openusage/config.json

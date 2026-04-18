@@ -608,7 +608,10 @@ pub fn run() {
             log::info!("OpenUsage v{} starting", version);
 
             // Load config early (lazy init via OnceLock, zero-cost after)
+            // and register it with the plugin engine so its HTTP API uses our
+            // proxy.
             let _proxy = config::get_resolved_proxy();
+            config::install_engine_resolver();
 
             track_daily_active_if_needed(app.handle());
             #[cfg(desktop)]
