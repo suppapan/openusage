@@ -54,6 +54,11 @@ struct Cli {
     /// Data directory for plugin state (defaults to ~/.openusage-agent)
     #[arg(long)]
     data_dir: Option<PathBuf>,
+
+    /// Run a one-shot diagnostic check (relay reachability, auth, per-plugin
+    /// readiness) and exit. Does not start the loop.
+    #[arg(long, default_value_t = false)]
+    check: bool,
 }
 
 fn now_rfc3339() -> String {
@@ -195,6 +200,179 @@ fn collect_via_cache_file(path: &PathBuf) -> Result<Vec<PluginSnapshot>, String>
     Ok(snapshots)
 }
 
+// ─── Diagnostics (--check) ──────────────────────────────────────────────────
+
+#[derive(Debug)]
+enum PluginStatus {
+    Ready { lines: usize },
+    Error(String),
+}
+
+fn diagnose_plugins(plugins_dir: &std::path::Path, data_dir: &PathBuf) -> Vec<(String, PluginStatus)> {
+    let plugins = manifest::load_plugins_from_dir(plugins_dir);
+    let mut results = Vec::new();
+    let agent_version = env!("CARGO_PKG_VERSION");
+    for plugin in &plugins {
+        let id = plugin.manifest.id.clone();
+        if EXCLUDED_PLUGINS.contains(&id.as_str()) {
+            continue;
+        }
+        let output = runtime::run_probe(plugin, data_dir, agent_version);
+        let is_error = output.lines.len() == 1
+            && matches!(
+                &output.lines[0],
+                runtime::MetricLine::Badge { label, .. } if label == "Error"
+            );
+        if is_error {
+            let msg = match &output.lines[0] {
+                runtime::MetricLine::Badge { text, .. } => text.clone(),
+                _ => "unknown".into(),
+            };
+            results.push((id, PluginStatus::Error(msg)));
+        } else {
+            results.push((id, PluginStatus::Ready { lines: output.lines.len() }));
+        }
+    }
+    results
+}
+
+async fn check_relay_health(client: &reqwest::Client, relay_url: &str) -> Result<(), String> {
+    let url = format!("{}/v1/health", relay_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("network unreachable: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    Ok(())
+}
+
+async fn check_relay_auth(
+    client: &reqwest::Client,
+    relay_url: &str,
+    token: &str,
+) -> Result<usize, String> {
+    let url = format!("{}/v1/pull", relay_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("network unreachable: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {} (token rejected?)", resp.status()));
+    }
+    let body = resp.text().await.map_err(|e| format!("read response: {}", e))?;
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("invalid relay response: {}", e))?;
+    let count = v.get("machines").and_then(|m| m.as_array()).map(|a| a.len()).unwrap_or(0);
+    Ok(count)
+}
+
+async fn run_doctor(
+    cli: &Cli,
+    client: &reqwest::Client,
+    plugins_dir: &PathBuf,
+    data_dir: &PathBuf,
+) -> i32 {
+    let mut all_ok = true;
+
+    println!("\n=== OpenUsage Agent Diagnostic ===");
+    println!("Machine: {}", cli.machine_name.clone().unwrap_or_else(resolve_machine_id));
+    println!("Source:  {}", cli.source);
+    println!("Relay:   {}", cli.relay);
+    println!("Token:   {}...{}", &cli.token[..cli.token.len().min(8)], &cli.token[cli.token.len().saturating_sub(4)..]);
+    println!();
+
+    println!("[1/4] Relay reachable?");
+    match check_relay_health(client, &cli.relay).await {
+        Ok(()) => println!("       OK"),
+        Err(e) => {
+            println!("       FAIL: {}", e);
+            println!("       Hint: check the relay URL is correct and the host is up");
+            all_ok = false;
+        }
+    }
+
+    println!("[2/4] Token accepted by relay?");
+    match check_relay_auth(client, &cli.relay, &cli.token).await {
+        Ok(n) => println!("       OK (relay reports {} machine(s) for this token)", n),
+        Err(e) => {
+            println!("       FAIL: {}", e);
+            println!("       Hint: re-copy the token from the dashboard's Settings -> Multi-Machine Sync");
+            all_ok = false;
+        }
+    }
+
+    println!("[3/4] Plugins available?");
+    if cli.source == "probe" {
+        if !plugins_dir.exists() {
+            println!("       Extracting bundled plugins...");
+            if let Err(e) = extract_bundled_plugins(plugins_dir) {
+                println!("       FAIL: {}", e);
+                all_ok = false;
+            }
+        }
+        let plugin_count = std::fs::read_dir(plugins_dir)
+            .map(|d| d.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count())
+            .unwrap_or(0);
+        println!("       OK ({} plugins in {})", plugin_count, plugins_dir.display());
+    } else {
+        println!("       Skipped (source mode is '{}')", cli.source);
+    }
+
+    println!("[4/4] Plugin readiness:");
+    if cli.source == "probe" {
+        let results = diagnose_plugins(plugins_dir, data_dir);
+        let mut ready_count = 0;
+        let mut error_count = 0;
+        for (id, status) in &results {
+            match status {
+                PluginStatus::Ready { lines } => {
+                    println!("       OK    {} ({} lines)", id, lines);
+                    ready_count += 1;
+                }
+                PluginStatus::Error(msg) => {
+                    let short = if msg.len() > 80 { &msg[..80] } else { msg };
+                    println!("       SKIP  {} ({})", id, short);
+                    error_count += 1;
+                }
+            }
+        }
+        println!();
+        println!("Summary: {} ready, {} skipped (no creds / not installed)", ready_count, error_count);
+        if ready_count == 0 {
+            println!("Hint: at least one supported AI tool (Claude Code, Cursor, Codex, etc.) needs to be");
+            println!("      installed and logged in on this machine for it to contribute usage data.");
+        }
+    } else if cli.source == "local-api" {
+        let api = cli
+            .local_api
+            .clone()
+            .unwrap_or_else(|| DEFAULT_LOCAL_API.to_string());
+        match collect_via_local_api(client, &api).await {
+            Ok(snaps) => println!("       Local API returned {} snapshots", snaps.len()),
+            Err(e) => {
+                println!("       FAIL: {}", e);
+                all_ok = false;
+            }
+        }
+    } else {
+        println!("       (source={}; nothing to probe)", cli.source);
+    }
+
+    println!();
+    if all_ok {
+        println!("All checks passed. Re-start the service to begin pushing.");
+        0
+    } else {
+        println!("Some checks failed. See hints above.");
+        1
+    }
+}
+
 async fn push_to_relay(
     client: &reqwest::Client,
     relay_url: &str,
@@ -219,9 +397,16 @@ async fn push_to_relay(
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     let cli = Cli::parse();
+
+    // In --check mode, silence plugin engine logs so the diagnostic output
+    // isn't drowned in DEBUG-level keychain misses, sqlite errors, etc.
+    let default_filter = if cli.check {
+        "error,openusage_agent=info"
+    } else {
+        "info"
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter)).init();
 
     let machine_id = resolve_machine_id();
     let machine_name = cli
@@ -255,6 +440,12 @@ async fn main() {
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .expect("create HTTP client");
+
+    // One-shot diagnostic mode
+    if cli.check {
+        let code = run_doctor(&cli, &client, &plugins_dir, &data_dir).await;
+        std::process::exit(code);
+    }
 
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(cli.interval));
 
