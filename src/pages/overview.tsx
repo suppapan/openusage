@@ -4,6 +4,7 @@ import { MachineBadge } from "@/components/machine-badge"
 import type { PluginDisplayState } from "@/lib/plugin-types"
 import type { DisplayMode, ResetTimerDisplayMode } from "@/lib/settings"
 import { useAppSyncStore } from "@/stores/app-sync-store"
+import { combineByProvider } from "@/lib/aggregate-metrics"
 
 interface OverviewPageProps {
   plugins: PluginDisplayState[]
@@ -33,6 +34,8 @@ export function OverviewPage({
     )
   }
 
+  const combined = hasRemoteMachines ? combineByProvider(plugins, remoteMachines) : []
+
   return (
     <div>
       {hasRemoteMachines && (
@@ -60,58 +63,57 @@ export function OverviewPage({
         </div>
       )}
 
-      {/* Local machine plugins */}
-      {plugins.map((plugin, index) => (
-        <div key={plugin.meta.id}>
-          {viewMode === "all" && hasRemoteMachines && index === 0 && (
-            <div className="px-0.5 mb-1">
-              <MachineBadge name="" isLocal />
-            </div>
-          )}
+      {/* This Machine view: only local plugins */}
+      {viewMode === "local" && plugins.map((plugin, index) => (
+        <ProviderCard
+          key={plugin.meta.id}
+          name={plugin.meta.name}
+          plan={plugin.data?.plan}
+          showSeparator={index < plugins.length - 1}
+          loading={plugin.loading}
+          error={plugin.error}
+          lines={plugin.data?.lines ?? []}
+          skeletonLines={plugin.meta.lines}
+          lastManualRefreshAt={plugin.lastManualRefreshAt}
+          onRetry={onRetryPlugin ? () => onRetryPlugin(plugin.meta.id) : undefined}
+          scopeFilter="overview"
+          displayMode={displayMode}
+          resetTimerDisplayMode={resetTimerDisplayMode}
+          onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
+        />
+      ))}
+
+      {/* All Machines view: combined cards with per-machine breakdown */}
+      {viewMode === "all" && combined.map((entry, index) => (
+        <div key={entry.providerId}>
           <ProviderCard
-            name={plugin.meta.name}
-            plan={plugin.data?.plan}
-            showSeparator={viewMode === "local" ? index < plugins.length - 1 : true}
-            loading={plugin.loading}
-            error={plugin.error}
-            lines={plugin.data?.lines ?? []}
-            skeletonLines={plugin.meta.lines}
-            lastManualRefreshAt={plugin.lastManualRefreshAt}
-            onRetry={onRetryPlugin ? () => onRetryPlugin(plugin.meta.id) : undefined}
+            name={entry.displayName}
+            plan={entry.plan}
+            showSeparator={index < combined.length - 1}
+            loading={false}
+            error={null}
+            lines={entry.combinedLines}
+            skeletonLines={[]}
+            lastManualRefreshAt={null}
             scopeFilter="overview"
             displayMode={displayMode}
             resetTimerDisplayMode={resetTimerDisplayMode}
             onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
           />
-        </div>
-      ))}
-
-      {/* Remote machine snapshots */}
-      {viewMode === "all" && hasRemoteMachines && remoteMachines.map((machine) => (
-        <div key={machine.machineId}>
-          <div className="px-0.5 mt-2 mb-1">
-            <MachineBadge
-              name={machine.machineName}
-              lastSeenAt={machine.lastSeenAt}
-            />
-          </div>
-          {machine.snapshots.map((snapshot, sIdx) => (
-            <ProviderCard
-              key={`${machine.machineId}-${snapshot.providerId}`}
-              name={snapshot.displayName}
-              plan={snapshot.plan}
-              showSeparator={sIdx < machine.snapshots.length - 1}
-              loading={false}
-              error={null}
-              lines={snapshot.lines}
-              skeletonLines={[]}
-              lastManualRefreshAt={null}
-              scopeFilter="overview"
-              displayMode={displayMode}
-              resetTimerDisplayMode={resetTimerDisplayMode}
-              onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
-            />
-          ))}
+          {entry.perMachine.length > 1 && (
+            <div className="flex flex-wrap gap-1 px-3 -mt-2 mb-2">
+              <span className="text-[10px] text-muted-foreground mr-1">
+                Combined from {entry.perMachine.length} machines:
+              </span>
+              {entry.perMachine.map((src) => (
+                <MachineBadge
+                  key={src.machine.id}
+                  name={src.machine.name}
+                  isLocal={src.machine.isLocal}
+                />
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
