@@ -300,11 +300,8 @@ async fn main() {
         };
 
         log::info!("collected {} snapshots", snapshots.len());
-        if snapshots.is_empty() {
-            log::debug!("nothing to push");
-            continue;
-        }
-
+        // Always push, even with 0 snapshots, so the dashboard sees the
+        // machine as "connected" (instead of completely invisible).
         let push = MachinePush {
             machine_id: machine_id.clone(),
             machine_name: machine_name.clone(),
