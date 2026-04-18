@@ -128,15 +128,17 @@ The relay listens on port `8090` by default. Set `RELAY_PORT` env var to change 
 
 ### 2. Configure the Dashboard
 
-In the OpenUsage desktop app:
+In the OpenUsage desktop app on your **main** machine (e.g. macOS):
 
-1. Open **Settings**
-2. Scroll to **Multi-Machine Sync**
-3. Toggle **Enable sync**
-4. Enter your relay URL (e.g. `http://your-server:8090`)
-5. Click **Generate Token** and copy it
+1. Click the **OpenUsage icon** in the menu bar (top-right on macOS, system tray on Windows/Linux) → the panel opens
+2. Click the **gear icon** (⚙️) at the bottom-left of the panel → **Settings** opens
+3. Scroll down past Auto Refresh, Theme, Global Shortcut, etc. until you see the **Multi-Machine Sync** section
+4. Check the **"Enable sync"** checkbox → two new fields appear
+5. Type your relay URL into **Relay URL** (e.g. `http://your-server:8090`) → click outside the input to save
+6. Click **Generate Token** → a 32-character hex token appears (e.g. `a1b2c3d4e5f6789012345678901234ab`)
+7. Click **Copy** to put the token in your clipboard
 
-The dashboard will automatically poll the relay every 60 seconds and display remote machine data.
+The dashboard now polls the relay every 60 seconds and displays any machine that pushes with the same token.
 
 ### 3. Install the Agent on Remote Machines (one-liner)
 
@@ -202,12 +204,61 @@ openusage-agent \
 - **Local API** (default): Reads from a running OpenUsage instance's HTTP API at `http://127.0.0.1:6736`. The agent just forwards cached data.
 - **Cache file**: Pass `--cache-file <PATH>` to read directly from `usage-api-cache.json`. Useful when you want to skip HTTP.
 
-### 4. View Aggregated Data
+### 4. View Aggregated Data in the Dashboard
 
-Once agents are pushing data, the dashboard overview page shows two tabs:
+Once at least one remote agent is pushing successfully, open the dashboard:
 
-- **This Machine** — your local usage (default view)
-- **All Machines** — usage from all connected machines, grouped by machine with badges showing machine names and last-seen timestamps
+1. Click the **OpenUsage menu bar icon** to open the panel
+2. The **Overview** tab is selected by default
+3. At the top of the overview you'll see two pill-buttons appear:
+   - **This Machine** — only your local usage (default view)
+   - **All Machines (N)** — aggregated view; N = your machine + all remote machines reporting in
+
+Click **All Machines (N)** to see every machine. Each machine's data is grouped under a labeled badge:
+- **"This machine"** badge (highlighted with the primary color) for your local usage
+- **`<hostname>` · `<time> ago`** badge for each remote machine
+
+If you don't see the toggle, no remote machines are connected yet — wait up to 60 seconds for the first sync, or check the agent's logs (`sudo journalctl -u openusage-agent -f`).
+
+#### Verifying machines are connected
+
+In the Settings → Multi-Machine Sync section, scroll to the bottom — you'll see **Connected Machines (N)** with a row per remote machine, showing its name and how long ago it last reported.
+
+You can also hit the relay directly from anywhere to inspect what it's storing:
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" http://your-relay:8090/v1/pull
+```
+
+The response is a JSON object with one entry per machine.
+
+#### Removing a stale machine
+
+If a machine is gone for good (decommissioned server, etc.), you can delete it from the relay:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer YOUR_TOKEN" \
+  http://your-relay:8090/v1/machines/<machine_id>
+```
+
+(`<machine_id>` is the hostname shown in the dashboard.) Otherwise it auto-cleans after 24 hours of inactivity.
+
+### Troubleshooting
+
+**Agent installed but dashboard shows no remote machines:**
+- Check the agent's status: `sudo systemctl status openusage-agent`
+- Tail logs: `sudo journalctl -u openusage-agent -n 50 --no-pager`
+- Common errors:
+  - `failed to reach relay: dns error` → relay URL is wrong; reinstall the agent with the correct URL
+  - `relay returned 401: missing or invalid Authorization header` → token mismatch; copy the token again from the dashboard and reinstall
+  - `failed to reach local API at http://127.0.0.1:6736` → the OpenUsage desktop app isn't running on the agent host. Either install + run it, or use `--cache-file <PATH>` to read from disk
+
+**Re-running the installer with new values:**
+```bash
+sudo systemctl disable --now openusage-agent
+sudo rm /etc/systemd/system/openusage-agent.service
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash -s -- --token NEW_TOKEN --relay https://new-relay:8090
+```
 
 ### Security Notes
 
