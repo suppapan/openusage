@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { combineMetricLines } from "@/lib/aggregate-metrics"
+import { combineMetricLines, sumNumericTextValues } from "@/lib/aggregate-metrics"
 import type { MetricLine } from "@/lib/plugin-types"
 
 const local = { id: "__local__", name: "This machine", isLocal: true }
@@ -105,6 +105,31 @@ describe("combineMetricLines", () => {
     ])
 
     expect(out.map((l) => l.label)).toEqual(["First", "Second"])
+  })
+
+  it("sums dollar+token text values like ccusage 'Today' lines", () => {
+    const a: MetricLine = { type: "text", label: "Today", value: "$1.20 \u00b7 500K tokens" }
+    const b: MetricLine = { type: "text", label: "Today", value: "$0.80 \u00b7 1.5M tokens" }
+
+    const out = combineMetricLines([
+      { machine: local, lines: [a] },
+      { machine: remote, lines: [b] },
+    ])
+
+    if (out[0].type !== "text") throw new Error("expected text")
+    expect(out[0].value).toBe("$2.00 \u00b7 2M tokens")
+  })
+
+  it("sums dollar-only text values", () => {
+    expect(sumNumericTextValues(["$1.50", "$2.25", "$0.75"])).toBe("$4.50")
+  })
+
+  it("sums token-only text values across K/M units", () => {
+    expect(sumNumericTextValues(["500K tokens", "1.5M tokens"])).toBe("2M tokens")
+  })
+
+  it("returns null when a value can't be parsed as dollars or tokens", () => {
+    expect(sumNumericTextValues(["12 calls", "$3.00"])).toBe(null)
   })
 
   it("returns the original line when only one machine reports it", () => {

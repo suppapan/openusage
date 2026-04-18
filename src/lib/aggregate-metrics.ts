@@ -81,11 +81,76 @@ function combineBucket(lines: MetricLine[]): MetricLine {
     const all = lines.filter((l): l is Extract<MetricLine, { type: "text" }> => l.type === "text")
     const uniqValues = Array.from(new Set(all.map((l) => l.value)))
     if (uniqValues.length === 1) return first
+    // Try to parse + sum numeric token/cost patterns (e.g. "$1.20 · 500K tokens")
+    const summed = sumNumericTextValues(all.map((l) => l.value))
+    if (summed) return { ...first, value: summed }
     return { ...first, value: uniqValues.join(" + ") }
   }
 
   // badge: take first
   return first
+}
+
+// ─── Text value summation helpers ───────────────────────────────────────────
+
+/**
+ * Parse a text value like "$1.20 · 500K tokens" or "$0.42 · 1.2M tokens" or
+ * "1.5M tokens" or just "$3.45" and return any extractable dollar/token totals.
+ * Returns null if neither dollars nor tokens are detectable.
+ */
+function parseDollarsAndTokens(value: string): { dollars: number | null; tokens: number | null } | null {
+  const dollarMatch = value.match(/\$\s*(-?\d+(?:\.\d+)?)/)
+  const tokenMatch = value.match(/(-?\d+(?:\.\d+)?)\s*([KMB])?\s*tokens?/i)
+  let dollars: number | null = null
+  let tokens: number | null = null
+  if (dollarMatch) dollars = parseFloat(dollarMatch[1])
+  if (tokenMatch) {
+    const n = parseFloat(tokenMatch[1])
+    const suffix = (tokenMatch[2] || "").toUpperCase()
+    const mult = suffix === "B" ? 1e9 : suffix === "M" ? 1e6 : suffix === "K" ? 1e3 : 1
+    tokens = n * mult
+  }
+  if (dollars === null && tokens === null) return null
+  return { dollars, tokens }
+}
+
+function fmtTokens(n: number): string {
+  const abs = Math.abs(n)
+  if (abs >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + "B"
+  if (abs >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M"
+  if (abs >= 1e3) return (n / 1e3).toFixed(1).replace(/\.?0+$/, "") + "K"
+  return String(Math.round(n))
+}
+
+/**
+ * If every value is parseable as dollars and/or tokens, return a summed
+ * formatted string like the original (e.g. "$3.20 · 1.5M tokens").
+ * Returns null if any value can't be parsed (so the caller falls back to
+ * concatenation).
+ */
+export function sumNumericTextValues(values: string[]): string | null {
+  let totalDollars: number | null = null
+  let totalTokens: number | null = null
+  let anyDollars = false
+  let anyTokens = false
+
+  for (const v of values) {
+    const parsed = parseDollarsAndTokens(v)
+    if (!parsed) return null
+    if (parsed.dollars !== null) {
+      anyDollars = true
+      totalDollars = (totalDollars ?? 0) + parsed.dollars
+    }
+    if (parsed.tokens !== null) {
+      anyTokens = true
+      totalTokens = (totalTokens ?? 0) + parsed.tokens
+    }
+  }
+
+  const parts: string[] = []
+  if (anyDollars && totalDollars !== null) parts.push("$" + totalDollars.toFixed(2))
+  if (anyTokens && totalTokens !== null) parts.push(fmtTokens(totalTokens) + " tokens")
+  return parts.length > 0 ? parts.join(" \u00b7 ") : null
 }
 
 /**
