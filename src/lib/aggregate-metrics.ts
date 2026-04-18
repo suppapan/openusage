@@ -1,5 +1,5 @@
 import type { MetricLine, PluginDisplayState } from "@/lib/plugin-types"
-import type { RemoteMachine, PluginSnapshot } from "@/lib/sync-types"
+import type { RemoteMachine } from "@/lib/sync-types"
 
 export type SourceMachine = {
   id: string
