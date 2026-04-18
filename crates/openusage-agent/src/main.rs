@@ -69,14 +69,34 @@ fn resolve_machine_id() -> String {
         .unwrap_or_else(|| "unknown-machine".to_string())
 }
 
+/// Plugin directory names to skip (test-only, not for production data).
+const EXCLUDED_PLUGINS: &[&str] = &["mock"];
+
 /// Extract bundled plugins to the given directory if not already present.
+/// Skips test-only plugins (mock, etc.) so they don't appear in real dashboards.
 fn extract_bundled_plugins(target: &std::path::Path) -> Result<(), String> {
     if !target.exists() {
         std::fs::create_dir_all(target).map_err(|e| format!("create plugins dir: {}", e))?;
     }
-    BUNDLED_PLUGINS
-        .extract(target)
-        .map_err(|e| format!("extract plugins: {}", e))?;
+    for entry in BUNDLED_PLUGINS.entries() {
+        // Each top-level entry is a plugin directory.
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if EXCLUDED_PLUGINS.contains(&name) {
+            log::debug!("skipping excluded plugin '{}'", name);
+            continue;
+        }
+        if let Some(dir) = entry.as_dir() {
+            dir.extract(target)
+                .map_err(|e| format!("extract {}: {}", name, e))?;
+        } else if let Some(file) = entry.as_file() {
+            // Top-level files (e.g. test-helpers.js) — skip; plugins are dirs.
+            log::debug!("skipping top-level file {:?}", file.path());
+        }
+    }
     Ok(())
 }
 
@@ -110,6 +130,10 @@ fn collect_via_probe(
     let mut snapshots = Vec::new();
     let agent_version = env!("CARGO_PKG_VERSION");
     for plugin in &plugins {
+        if EXCLUDED_PLUGINS.contains(&plugin.manifest.id.as_str()) {
+            log::debug!("skipping excluded plugin '{}'", plugin.manifest.id);
+            continue;
+        }
         let output = runtime::run_probe(plugin, data_dir, agent_version);
         // Skip plugins that returned only an error badge
         let is_error = output.lines.len() == 1
