@@ -139,7 +139,9 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
   sudo systemctl daemon-reload
-  sudo systemctl enable --now openusage-agent
+  sudo systemctl enable openusage-agent
+  # Force a restart so a re-run picks up new binary / config
+  sudo systemctl restart openusage-agent
   echo ">>> Service running. Check status:"
   echo "    sudo systemctl status openusage-agent"
   echo ">>> Tail logs:"
