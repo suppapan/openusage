@@ -75,19 +75,54 @@ fn config_path(data_dir: &PathBuf) -> PathBuf {
     data_dir.join("config.json")
 }
 
+/// System-wide config path. Used as a fallback so non-root users can run
+/// `openusage-agent --check` even if the service was installed by root.
+fn system_config_path() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var("ProgramData").unwrap_or_else(|_| "C:/ProgramData".into()))
+            .join("OpenUsage")
+            .join("agent.json")
+    } else {
+        PathBuf::from("/etc/openusage-agent/config.json")
+    }
+}
+
 fn save_config(data_dir: &PathBuf, token: &str, relay: &str) {
     let _ = std::fs::create_dir_all(data_dir);
     let cfg = AgentConfig {
         token: token.to_string(),
         relay: relay.to_string(),
     };
-    if let Ok(json) = serde_json::to_string_pretty(&cfg) {
-        let _ = std::fs::write(config_path(data_dir), json);
+    let json = match serde_json::to_string_pretty(&cfg) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let _ = std::fs::write(config_path(data_dir), &json);
+    // Also try writing the system path so non-root users can read it on
+    // --check. Best-effort: silently ignore permission failures.
+    let sys = system_config_path();
+    if let Some(parent) = sys.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if std::fs::write(&sys, &json).is_ok() {
+        // Make world-readable so unprivileged users can run --check.
+        // (token is a shared sync secret, not a long-term credential.)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&sys, std::fs::Permissions::from_mode(0o644));
+        }
     }
 }
 
 fn load_config(data_dir: &PathBuf) -> Option<AgentConfig> {
-    let content = std::fs::read_to_string(config_path(data_dir)).ok()?;
+    // Prefer per-user config; fall back to system-wide.
+    if let Ok(content) = std::fs::read_to_string(config_path(data_dir)) {
+        if let Ok(cfg) = serde_json::from_str(&content) {
+            return Some(cfg);
+        }
+    }
+    let content = std::fs::read_to_string(system_config_path()).ok()?;
     serde_json::from_str(&content).ok()
 }
 
