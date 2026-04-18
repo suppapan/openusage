@@ -93,9 +93,13 @@ export function OverviewPage({
             loading={false}
             error={null}
             lines={entry.combinedLines}
-            skeletonLines={[]}
+            // Pass the local manifest's skeleton lines when we have it so the
+            // card's overview-scope filter knows which labels to show. When
+            // only remote machines have this provider (no local meta), pass
+            // scopeFilter="all" so nothing gets filtered out.
+            skeletonLines={entry.meta?.lines ?? []}
             lastManualRefreshAt={null}
-            scopeFilter="overview"
+            scopeFilter={entry.meta ? "overview" : "all"}
             displayMode={displayMode}
             resetTimerDisplayMode={resetTimerDisplayMode}
             onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
