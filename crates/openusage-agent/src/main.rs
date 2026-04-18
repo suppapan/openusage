@@ -213,19 +213,22 @@ fn collect_via_probe(
             continue;
         }
         let output = runtime::run_probe(plugin, data_dir, agent_version);
-        // Skip plugins that returned only an error badge
+        // Push every result, even error ones. The dashboard renders the error
+        // badge so the user can see exactly why a plugin isn't reporting (e.g.
+        // 'Not logged in. Run `codex` to authenticate.') without SSHing to
+        // the machine.
         let is_error = output.lines.len() == 1
             && matches!(
                 &output.lines[0],
                 runtime::MetricLine::Badge { label, .. } if label == "Error"
             );
-        if is_error {
-            log::warn!("skip {} (error result)", output.provider_id);
-            continue;
-        }
         match to_snapshot(&output, &now_rfc3339()) {
             Ok(snap) => {
-                log::info!("ok {} ({} lines)", snap.provider_id, snap.lines.len());
+                if is_error {
+                    log::info!("err {} (forwarding error to dashboard)", snap.provider_id);
+                } else {
+                    log::info!("ok {} ({} lines)", snap.provider_id, snap.lines.len());
+                }
                 snapshots.push(snap);
             }
             Err(e) => log::warn!("convert {} failed: {}", output.provider_id, e),
