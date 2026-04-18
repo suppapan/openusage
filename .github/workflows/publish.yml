@@ -222,16 +222,20 @@ jobs:
 
       # Unsigned build path: only for macOS when no cert. Avoids passing APPLE_*
       # env vars so tauri-bundler skips codesigning entirely.
-      - name: Tauri build (unsigned, no codesign)
+      # Sets APPLE_SIGNING_IDENTITY to "-" for ad-hoc signing, which makes the
+      # "damaged" Gatekeeper error go away (still shows "unidentified developer"
+      # warning that users can bypass via right-click → Open).
+      - name: Tauri build (unsigned, ad-hoc codesign)
         id: tauri-build-unsigned
         if: runner.os == 'macOS' && env.HAS_APPLE_CERT != 'true'
         shell: bash
         env:
+          APPLE_SIGNING_IDENTITY: "-"
           RUST_BACKTRACE: full
         run: |
           set +e
           ARGS="${{ matrix.args }}"
-          echo ">>> Running unsigned: bunx tauri build $ARGS --verbose"
+          echo ">>> Running unsigned (ad-hoc): bunx tauri build $ARGS --verbose"
           bunx tauri build $ARGS --verbose 2>&1 | tee tauri-build-output.txt
           EXIT=${PIPESTATUS[0]}
           if [ "$EXIT" != "0" ]; then
@@ -331,26 +335,25 @@ jobs:
               -o -name '*.AppImage' \
             \))
           fi
-          # Zip up the .app bundle for macOS (unsigned builds skip DMG creation)
+          # Fallback: if a .dmg wasn't produced (rare on unsigned builds), zip the
+          # .app bundle so macOS users still have something to download.
           if [[ "${{ runner.os }}" == "macOS" && -d "$BUNDLE_DIR/macos" ]]; then
-            APP_DIR=""
-            for candidate in "$BUNDLE_DIR/macos"/*.app; do
-              if [ -d "$candidate" ]; then APP_DIR="$candidate"; break; fi
-            done
-            if [ -n "$APP_DIR" ]; then
-              ARCH_SUFFIX="${{ matrix.rust_targets }}"
-              ARCH_SUFFIX="${ARCH_SUFFIX%-apple-darwin}"
-              # Rename aarch64 -> arm64 for clarity on macOS
-              if [[ "$ARCH_SUFFIX" == "aarch64" ]]; then
-                ARCH_SUFFIX="arm64"
+            HAS_DMG=$(ls release-assets/*.dmg 2>/dev/null | head -1 || true)
+            if [ -z "$HAS_DMG" ]; then
+              APP_DIR=""
+              for candidate in "$BUNDLE_DIR/macos"/*.app; do
+                if [ -d "$candidate" ]; then APP_DIR="$candidate"; break; fi
+              done
+              if [ -n "$APP_DIR" ]; then
+                ARCH_SUFFIX="${{ matrix.rust_targets }}"
+                ARCH_SUFFIX="${ARCH_SUFFIX%-apple-darwin}"
+                if [[ "$ARCH_SUFFIX" == "aarch64" ]]; then ARCH_SUFFIX="arm64"; fi
+                APP_NAME=$(basename "$APP_DIR" .app)
+                ZIP_NAME="${APP_NAME}_${ARCH_SUFFIX}.app.zip"
+                echo "Fallback: no DMG found, zipping $APP_DIR -> release-assets/$ZIP_NAME"
+                (cd "$(dirname "$APP_DIR")" && zip -qry "/tmp/$ZIP_NAME" "$(basename "$APP_DIR")")
+                mv "/tmp/$ZIP_NAME" "release-assets/$ZIP_NAME"
               fi
-              APP_NAME=$(basename "$APP_DIR" .app)
-              ZIP_NAME="${APP_NAME}_${ARCH_SUFFIX}.app.zip"
-              echo "Zipping $APP_DIR -> release-assets/$ZIP_NAME"
-              (cd "$(dirname "$APP_DIR")" && zip -qry "/tmp/$ZIP_NAME" "$(basename "$APP_DIR")")
-              mv "/tmp/$ZIP_NAME" "release-assets/$ZIP_NAME"
-            else
-              echo "No .app bundle found in $BUNDLE_DIR/macos"
             fi
           fi
           echo "::group::release-assets"

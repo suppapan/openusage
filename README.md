@@ -10,6 +10,12 @@ See your usage at a glance from your menu bar. No digging through dashboards.
 
 The app auto-updates. Install once and you're set.
 
+> **macOS users**: Builds from this fork are not signed with an Apple Developer ID. After dragging OpenUsage to Applications, you'll see a *"OpenUsage is damaged and can't be opened"* error. Fix it with one terminal command:
+> ```bash
+> xattr -cr /Applications/OpenUsage.app
+> ```
+> Then double-click the app normally. (Or right-click the app → **Open** → click **Open** in the warning dialog.)
+
 ## What It Does
 
 OpenUsage lives in your menu bar and shows you how much of your AI coding subscriptions you've used. Progress bars, badges, and clear labels. No mental math required.
