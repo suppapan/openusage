@@ -91,7 +91,23 @@ On macOS, the app uses a native floating panel anchored to the menu bar. On Wind
 
 ## Multi-Machine Sync
 
-Track usage across multiple machines from a single dashboard. Run the full app on your main machine and lightweight agents on your servers.
+Track usage across multiple machines (laptops, servers, VPSs) from a single dashboard.
+
+### Quickstart (3 commands)
+
+```bash
+# 1. On any server with a public IP — start the relay
+git clone https://github.com/suppapan/openusage.git && cd openusage
+docker build -t openusage-relay -f crates/openusage-relay/Dockerfile . \
+  && docker run -d -p 8090:8090 --name openusage-relay openusage-relay
+
+# 2. In the OpenUsage desktop app — Settings → Multi-Machine Sync → Enable → Generate Token
+
+# 3. On every machine you want to track — paste this (it'll prompt for token + relay URL)
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash
+```
+
+That's it. Within 60 seconds the dashboard's **All Machines** tab shows every connected machine.
 
 ### Architecture
 
@@ -142,67 +158,116 @@ The dashboard now polls the relay every 60 seconds and displays any machine that
 
 ### 3. Install the Agent on Remote Machines (one-liner)
 
-Paste one of these on the remote machine — it downloads the binary, prompts for the token and relay URL, and installs as a background service.
+The agent is **fully self-contained** — it bundles all 18 plugins and probes them itself. No need to install OpenUsage desktop on the agent's machine; it works on any headless server.
 
-**Linux / macOS:**
+Paste **one** command on each remote machine. It downloads the binary, prompts for the token and relay URL, and registers itself as a background service.
+
+#### Linux (Ubuntu, Debian, RHEL, etc.)
 ```bash
 curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash
 ```
 
-**Windows (PowerShell as user):**
+#### macOS
+```bash
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash
+```
+
+#### Windows (PowerShell)
 ```powershell
 iwr https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.ps1 | iex
 ```
 
-Or non-interactive (pass token + relay as flags):
+You'll be prompted:
+```
+Sync token: <paste token from dashboard>
+Relay URL (e.g. https://relay.example.com:8090): <paste your relay URL>
+```
+
+Done. The agent starts probing immediately and pushes every 5 minutes.
+
+#### Non-interactive (one-shot install with flags)
 
 ```bash
 # Linux / macOS
-curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash -s -- \
-  --token YOUR_SYNC_TOKEN \
-  --relay https://relay.example.com:8090
+curl -fsSL https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.sh | bash -s -- --token YOUR_TOKEN --relay https://relay.example.com:8090
 ```
 
 ```powershell
 # Windows PowerShell
-$env:OPENUSAGE_TOKEN = "YOUR_SYNC_TOKEN"
-$env:OPENUSAGE_RELAY = "https://relay.example.com:8090"
+$env:OPENUSAGE_TOKEN = "YOUR_TOKEN"; $env:OPENUSAGE_RELAY = "https://relay.example.com:8090"
 iwr https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent.ps1 | iex
 ```
 
-**What the installer does:**
-- Downloads the platform-appropriate `openusage-agent` binary from the latest release
-- Installs to `/usr/local/bin` (Linux/macOS) or `%LOCALAPPDATA%\OpenUsage` (Windows)
-- Registers a background service: `systemd` (Linux), `launchd` (macOS), or a Scheduled Task (Windows)
-- Starts pushing data to the relay every 5 minutes
+#### What the installer actually does
 
-**Installer options:**
+1. Detects your OS and CPU architecture
+2. Downloads the matching `openusage-agent` binary (~16 MB) from the GitHub release
+3. Installs it to `/usr/local/bin` (Linux/macOS) or `%LOCALAPPDATA%\OpenUsage` (Windows)
+4. Registers a background service so it survives reboots:
+   - **Linux**: `systemd` unit at `/etc/systemd/system/openusage-agent.service`
+   - **macOS**: `launchd` agent at `~/Library/LaunchAgents/com.openusage.agent.plist`
+   - **Windows**: A Scheduled Task named `OpenUsageAgent`
+5. Starts the service. The agent extracts its bundled plugins to `~/.openusage-agent/plugins/` on first run and starts probing.
 
-| Flag | Default | Notes |
-|------|---------|-------|
-| `--token` | — | Sync token from dashboard (prompted if omitted) |
-| `--relay` | — | Relay URL (prompted if omitted) |
+#### Installer options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--token` | — (prompted) | Sync token from the dashboard |
+| `--relay` | — (prompted) | Relay URL |
 | `--machine-name` | hostname | Display name shown in the dashboard |
 | `--interval` | `300` | Push interval in seconds |
-| `--no-service` | — | Install the binary only; don't register a service |
+| `--install-dir` | `/usr/local/bin` | Where to put the binary |
+| `--no-service` | — | Install binary only; don't register as a service |
 
-### Manual agent run (without installer)
-
-Build from source and run directly:
+#### How to verify it's working
 
 ```bash
-cargo build -p openusage-agent --release
+# Linux
+sudo systemctl status openusage-agent
+sudo journalctl -u openusage-agent -f      # live log; Ctrl+C to exit
 
-# Runs in foreground, reads from local OpenUsage HTTP API on port 6736
-openusage-agent \
-  --token YOUR_TOKEN_HERE \
-  --relay https://relay.example.com:8090
+# macOS
+launchctl list | grep openusage
+tail -f /tmp/openusage-agent.log
+
+# Windows (PowerShell)
+Get-ScheduledTask -TaskName OpenUsageAgent
 ```
 
-**Agent data sources:**
+You should see lines like `pushed to relay` every 5 minutes. If you see `failed to reach relay`, the URL is wrong; if you see `relay returned 401`, the token is wrong — re-run the installer.
 
-- **Local API** (default): Reads from a running OpenUsage instance's HTTP API at `http://127.0.0.1:6736`. The agent just forwards cached data.
-- **Cache file**: Pass `--cache-file <PATH>` to read directly from `usage-api-cache.json`. Useful when you want to skip HTTP.
+#### Uninstall
+
+```bash
+# Linux
+sudo systemctl disable --now openusage-agent
+sudo rm /etc/systemd/system/openusage-agent.service /usr/local/bin/openusage-agent
+
+# macOS
+launchctl unload ~/Library/LaunchAgents/com.openusage.agent.plist
+rm ~/Library/LaunchAgents/com.openusage.agent.plist /usr/local/bin/openusage-agent
+
+# Windows (PowerShell)
+Unregister-ScheduledTask -TaskName OpenUsageAgent -Confirm:$false
+Remove-Item "$env:LOCALAPPDATA\OpenUsage" -Recurse
+```
+
+### Manual agent run (advanced)
+
+If you don't want a service, just run the binary in the foreground:
+
+```bash
+openusage-agent --token YOUR_TOKEN --relay https://relay.example.com:8090
+```
+
+**Source modes** (all optional, default is `probe`):
+
+| Mode | Use when |
+|------|----------|
+| `--source probe` (default) | Standalone — agent runs all bundled plugins itself. Works on any machine with no other software needed. |
+| `--source local-api` | The OpenUsage desktop app is running on the same machine — agent forwards its API output (no double-probing). Pair with `--local-api http://127.0.0.1:6736`. |
+| `--source cache-file` | Read directly from `usage-api-cache.json` (no HTTP). Pair with `--cache-file /path/to/usage-api-cache.json`. |
 
 ### 4. View Aggregated Data in the Dashboard
 
