@@ -1,9 +1,8 @@
+import { useState } from "react"
 import { ProviderCard } from "@/components/provider-card"
-import { MachineBadge } from "@/components/machine-badge"
 import type { PluginDisplayState } from "@/lib/plugin-types"
 import type { DisplayMode, ResetTimerDisplayMode } from "@/lib/settings"
 import { useAppSyncStore } from "@/stores/app-sync-store"
-import { combineMetricLines } from "@/lib/aggregate-metrics"
 
 interface ProviderDetailPageProps {
   plugin: PluginDisplayState | null
@@ -13,6 +12,8 @@ interface ProviderDetailPageProps {
   onResetTimerDisplayModeToggle?: () => void
 }
 
+const LOCAL_TAB_ID = "__local__"
+
 export function ProviderDetailPage({
   plugin,
   onRetry,
@@ -21,6 +22,7 @@ export function ProviderDetailPage({
   onResetTimerDisplayModeToggle,
 }: ProviderDetailPageProps) {
   const { syncEnabled, remoteMachines } = useAppSyncStore()
+  const [activeMachineId, setActiveMachineId] = useState<string>(LOCAL_TAB_ID)
 
   if (!plugin) {
     return (
@@ -30,7 +32,7 @@ export function ProviderDetailPage({
     )
   }
 
-  // Find this provider's snapshots on remote machines
+  // Build the list of machines that have this provider
   const remoteSources = syncEnabled
     ? remoteMachines
         .map((m) => {
@@ -40,53 +42,68 @@ export function ProviderDetailPage({
         .filter((x): x is NonNullable<typeof x> => x !== null)
     : []
 
-  const showCombined = remoteSources.length > 0 && plugin.data
-  const localLines = plugin.data?.lines ?? []
-  const combinedLines = showCombined
-    ? combineMetricLines([
-        { machine: { id: "__local__", name: "This machine", isLocal: true }, lines: localLines },
-        ...remoteSources.map((r) => ({
-          machine: { id: r.machine.machineId, name: r.machine.machineName, isLocal: false },
-          lines: r.snapshot.lines,
-        })),
-      ])
-    : localLines
+  const tabs: Array<{ id: string; label: string }> = [
+    { id: LOCAL_TAB_ID, label: "This machine" },
+    ...remoteSources.map((r) => ({ id: r.machine.machineId, label: r.machine.machineName })),
+  ]
+
+  const activeRemote = remoteSources.find((r) => r.machine.machineId === activeMachineId)
 
   return (
-    <div className="space-y-3">
-      <ProviderCard
-        name={plugin.meta.name}
-        plan={plugin.data?.plan}
-        links={plugin.meta.links}
-        showSeparator={false}
-        loading={plugin.loading}
-        error={plugin.error}
-        lines={combinedLines}
-        skeletonLines={plugin.meta.lines}
-        lastManualRefreshAt={plugin.lastManualRefreshAt}
-        onRetry={onRetry}
-        scopeFilter="all"
-        displayMode={displayMode}
-        resetTimerDisplayMode={resetTimerDisplayMode}
-        onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
-      />
-
-      {showCombined && (
-        <div className="px-3 pb-2">
-          <div className="text-[10px] text-muted-foreground mb-1">
-            Combined from {remoteSources.length + 1} machines:
-          </div>
-          <div className="flex flex-wrap gap-1">
-            <MachineBadge name="This machine" isLocal />
-            {remoteSources.map((r) => (
-              <MachineBadge
-                key={r.machine.machineId}
-                name={r.machine.machineName}
-                lastSeenAt={r.machine.lastSeenAt}
-              />
-            ))}
-          </div>
+    <div>
+      {remoteSources.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2 px-0.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveMachineId(tab.id)}
+              className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                activeMachineId === tab.id
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
+      )}
+
+      {activeMachineId === LOCAL_TAB_ID && (
+        <ProviderCard
+          name={plugin.meta.name}
+          plan={plugin.data?.plan}
+          links={plugin.meta.links}
+          showSeparator={false}
+          loading={plugin.loading}
+          error={plugin.error}
+          lines={plugin.data?.lines ?? []}
+          skeletonLines={plugin.meta.lines}
+          lastManualRefreshAt={plugin.lastManualRefreshAt}
+          onRetry={onRetry}
+          scopeFilter="all"
+          displayMode={displayMode}
+          resetTimerDisplayMode={resetTimerDisplayMode}
+          onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
+        />
+      )}
+
+      {activeRemote && (
+        <ProviderCard
+          name={activeRemote.snapshot.displayName}
+          plan={activeRemote.snapshot.plan}
+          links={plugin.meta.links}
+          showSeparator={false}
+          loading={false}
+          error={null}
+          lines={activeRemote.snapshot.lines}
+          skeletonLines={plugin.meta.lines}
+          lastManualRefreshAt={null}
+          scopeFilter="all"
+          displayMode={displayMode}
+          resetTimerDisplayMode={resetTimerDisplayMode}
+          onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
+        />
       )}
     </div>
   )

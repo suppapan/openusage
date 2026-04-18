@@ -1,10 +1,8 @@
 import { useState } from "react"
 import { ProviderCard } from "@/components/provider-card"
-import { MachineBadge } from "@/components/machine-badge"
 import type { PluginDisplayState } from "@/lib/plugin-types"
 import type { DisplayMode, ResetTimerDisplayMode } from "@/lib/settings"
 import { useAppSyncStore } from "@/stores/app-sync-store"
-import { combineByProvider } from "@/lib/aggregate-metrics"
 
 interface OverviewPageProps {
   plugins: PluginDisplayState[]
@@ -14,6 +12,8 @@ interface OverviewPageProps {
   onResetTimerDisplayModeToggle?: () => void
 }
 
+const LOCAL_TAB_ID = "__local__"
+
 export function OverviewPage({
   plugins,
   onRetryPlugin,
@@ -22,7 +22,7 @@ export function OverviewPage({
   onResetTimerDisplayModeToggle,
 }: OverviewPageProps) {
   const { syncEnabled, remoteMachines } = useAppSyncStore()
-  const [viewMode, setViewMode] = useState<"local" | "all">("local")
+  const [activeMachineId, setActiveMachineId] = useState<string>(LOCAL_TAB_ID)
 
   const hasRemoteMachines = syncEnabled && remoteMachines.length > 0
 
@@ -34,37 +34,37 @@ export function OverviewPage({
     )
   }
 
-  const combined = hasRemoteMachines ? combineByProvider(plugins, remoteMachines) : []
+  // Build the tab list: Local first, then one per remote machine
+  const tabs: Array<{ id: string; label: string }> = [
+    { id: LOCAL_TAB_ID, label: "This machine" },
+    ...remoteMachines.map((m) => ({ id: m.machineId, label: m.machineName })),
+  ]
+
+  // Find the snapshot data for the active tab
+  const activeRemoteMachine = remoteMachines.find((m) => m.machineId === activeMachineId)
 
   return (
     <div>
       {hasRemoteMachines && (
-        <div className="flex gap-1 mb-2 px-0.5">
-          <button
-            onClick={() => setViewMode("local")}
-            className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-              viewMode === "local"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            This Machine
-          </button>
-          <button
-            onClick={() => setViewMode("all")}
-            className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-              viewMode === "all"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            All Machines ({remoteMachines.length + 1})
-          </button>
+        <div className="flex flex-wrap gap-1 mb-2 px-0.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveMachineId(tab.id)}
+              className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                activeMachineId === tab.id
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* This Machine view: only local plugins */}
-      {viewMode === "local" && plugins.map((plugin, index) => (
+      {/* Local machine: render the live plugin states */}
+      {activeMachineId === LOCAL_TAB_ID && plugins.map((plugin, index) => (
         <ProviderCard
           key={plugin.meta.id}
           name={plugin.meta.name}
@@ -83,43 +83,38 @@ export function OverviewPage({
         />
       ))}
 
-      {/* All Machines view: combined cards with per-machine breakdown */}
-      {viewMode === "all" && combined.map((entry, index) => (
-        <div key={entry.providerId}>
-          <ProviderCard
-            name={entry.displayName}
-            plan={entry.plan}
-            showSeparator={index < combined.length - 1}
-            loading={false}
-            error={null}
-            lines={entry.combinedLines}
-            // Pass the local manifest's skeleton lines when we have it so the
-            // card's overview-scope filter knows which labels to show. When
-            // only remote machines have this provider (no local meta), pass
-            // scopeFilter="all" so nothing gets filtered out.
-            skeletonLines={entry.meta?.lines ?? []}
-            lastManualRefreshAt={null}
-            scopeFilter={entry.meta ? "overview" : "all"}
-            displayMode={displayMode}
-            resetTimerDisplayMode={resetTimerDisplayMode}
-            onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
-          />
-          {entry.perMachine.length > 1 && (
-            <div className="flex flex-wrap gap-1 px-3 -mt-2 mb-2">
-              <span className="text-[10px] text-muted-foreground mr-1">
-                Combined from {entry.perMachine.length} machines:
-              </span>
-              {entry.perMachine.map((src) => (
-                <MachineBadge
-                  key={src.machine.id}
-                  name={src.machine.name}
-                  isLocal={src.machine.isLocal}
-                />
-              ))}
+      {/* Remote machine: render its snapshots */}
+      {activeRemoteMachine && (() => {
+        if (activeRemoteMachine.snapshots.length === 0) {
+          return (
+            <div className="text-center text-muted-foreground py-8 text-sm">
+              No providers reporting yet from this machine.
             </div>
-          )}
-        </div>
-      ))}
+          )
+        }
+        return activeRemoteMachine.snapshots.map((snap, index) => {
+          // If the local app has metadata for this provider, use it for scope
+          // filtering and skeleton rendering. Otherwise show all lines.
+          const meta = plugins.find((p) => p.meta.id === snap.providerId)?.meta ?? null
+          return (
+            <ProviderCard
+              key={snap.providerId}
+              name={snap.displayName}
+              plan={snap.plan}
+              showSeparator={index < activeRemoteMachine.snapshots.length - 1}
+              loading={false}
+              error={null}
+              lines={snap.lines}
+              skeletonLines={meta?.lines ?? []}
+              lastManualRefreshAt={null}
+              scopeFilter={meta ? "overview" : "all"}
+              displayMode={displayMode}
+              resetTimerDisplayMode={resetTimerDisplayMode}
+              onResetTimerDisplayModeToggle={onResetTimerDisplayModeToggle}
+            />
+          )
+        })
+      })()}
     </div>
   )
 }
