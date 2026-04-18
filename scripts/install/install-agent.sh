@@ -195,3 +195,6 @@ fi
 
 echo ""
 echo ">>> Setup complete. Agent will push to $RELAY every ${INTERVAL}s."
+echo ""
+echo ">>> Run a one-shot diagnostic to check connectivity, token, and per-plugin status:"
+echo "    $TARGET_BIN --check"

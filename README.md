@@ -222,6 +222,37 @@ iwr https://github.com/suppapan/openusage/releases/download/v0.7.0/install-agent
 
 #### How to verify it's working
 
+**One-shot diagnostic (recommended):**
+
+```bash
+openusage-agent --check
+```
+
+Prints a clean report — no flags needed once you've run the installer (it remembers your token + relay):
+
+```
+=== OpenUsage Agent Diagnostic ===
+Machine: my-server
+Source:  probe
+Relay:   http://relay.example.com:8090
+Token:   ccd3f4e7...2c28
+
+[1/4] Relay reachable?            OK
+[2/4] Token accepted by relay?    OK (relay reports 5 machines for this token)
+[3/4] Plugins available?          OK (17 plugins in /home/me/.openusage-agent/plugins)
+[4/4] Plugin readiness:
+       OK    claude (7 lines)
+       SKIP  codex (Not logged in. Run `codex` to authenticate.)
+       SKIP  cursor (Not logged in. Sign in via Cursor app or run `agent login`.)
+       ...
+Summary: 1 ready, 16 skipped (no creds / not installed)
+All checks passed.
+```
+
+If a step fails, the output tells you exactly what to fix. Exit code is non-zero on any failure, so you can use this in healthchecks.
+
+**Live logs (alternative):**
+
 ```bash
 # Linux
 sudo systemctl status openusage-agent
@@ -236,6 +267,15 @@ Get-ScheduledTask -TaskName OpenUsageAgent
 ```
 
 You should see lines like `pushed to relay` every 5 minutes. If you see `failed to reach relay`, the URL is wrong; if you see `relay returned 401`, the token is wrong — re-run the installer.
+
+**Common things `--check` will catch:**
+
+| Step that fails | Likely cause | Fix |
+|-----------------|--------------|-----|
+| `[1/4] Relay reachable?` | Wrong relay URL, firewall, relay container not running | `curl http://your-relay:8090/v1/health` from this host |
+| `[2/4] Token accepted` | Token typo, dashboard revoked the token | Re-copy token from dashboard Settings → Multi-Machine Sync, re-run installer |
+| `[3/4] Plugins available?` | Bundled-plugin extraction failed (rare) | Check `~/.openusage-agent/plugins/` is writable |
+| `[4/4]` shows 0 ready | No AI tools logged in on this machine | Install Claude Code / Cursor / Codex / etc. and log in |
 
 #### Uninstall
 

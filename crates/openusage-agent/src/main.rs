@@ -16,13 +16,15 @@ static BUNDLED_PLUGINS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../plugin
     about = "Headless agent that probes AI usage providers and pushes to a relay"
 )]
 struct Cli {
-    /// Sync token (generated in the dashboard app)
+    /// Sync token (generated in the dashboard app). Optional when --check is
+    /// set and a saved config exists at ~/.openusage-agent/config.json.
     #[arg(long)]
-    token: String,
+    token: Option<String>,
 
-    /// Relay server URL (e.g. https://relay.example.com:8090)
+    /// Relay server URL (e.g. https://relay.example.com:8090). Optional
+    /// when --check is set and a saved config exists.
     #[arg(long)]
-    relay: String,
+    relay: Option<String>,
 
     /// Machine display name (defaults to hostname)
     #[arg(long)]
@@ -61,6 +63,34 @@ struct Cli {
     check: bool,
 }
 
+// ─── Persisted config (so --check can run without re-typing token/relay) ────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AgentConfig {
+    token: String,
+    relay: String,
+}
+
+fn config_path(data_dir: &PathBuf) -> PathBuf {
+    data_dir.join("config.json")
+}
+
+fn save_config(data_dir: &PathBuf, token: &str, relay: &str) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let cfg = AgentConfig {
+        token: token.to_string(),
+        relay: relay.to_string(),
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+        let _ = std::fs::write(config_path(data_dir), json);
+    }
+}
+
+fn load_config(data_dir: &PathBuf) -> Option<AgentConfig> {
+    let content = std::fs::read_to_string(config_path(data_dir)).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 fn now_rfc3339() -> String {
     let now = time::OffsetDateTime::now_utc();
     now.format(&time::format_description::well_known::Rfc3339)
@@ -84,7 +114,6 @@ fn extract_bundled_plugins(target: &std::path::Path) -> Result<(), String> {
         std::fs::create_dir_all(target).map_err(|e| format!("create plugins dir: {}", e))?;
     }
     for entry in BUNDLED_PLUGINS.entries() {
-        // Each top-level entry is a plugin directory.
         let path = entry.path();
         let name = path
             .file_name()
@@ -94,11 +123,20 @@ fn extract_bundled_plugins(target: &std::path::Path) -> Result<(), String> {
             log::debug!("skipping excluded plugin '{}'", name);
             continue;
         }
-        if let Some(dir) = entry.as_dir() {
-            dir.extract(target)
+        if let Some(_dir) = entry.as_dir() {
+            // Ensure the per-plugin subdir exists so include_dir can write
+            // its contents (e.g. plugin.json, plugin.js, icon.svg) into it.
+            let plugin_subdir = target.join(name);
+            std::fs::create_dir_all(&plugin_subdir)
+                .map_err(|e| format!("mkdir {}: {}", plugin_subdir.display(), e))?;
+            // Extract the directory's contents (target is the workspace root,
+            // include_dir replays the relative paths under it).
+            entry
+                .as_dir()
+                .unwrap()
+                .extract(target)
                 .map_err(|e| format!("extract {}: {}", name, e))?;
         } else if let Some(file) = entry.as_file() {
-            // Top-level files (e.g. test-helpers.js) — skip; plugins are dirs.
             log::debug!("skipping top-level file {:?}", file.path());
         }
     }
@@ -273,6 +311,8 @@ async fn check_relay_auth(
 
 async fn run_doctor(
     cli: &Cli,
+    token: &str,
+    relay: &str,
     client: &reqwest::Client,
     plugins_dir: &PathBuf,
     data_dir: &PathBuf,
@@ -282,12 +322,12 @@ async fn run_doctor(
     println!("\n=== OpenUsage Agent Diagnostic ===");
     println!("Machine: {}", cli.machine_name.clone().unwrap_or_else(resolve_machine_id));
     println!("Source:  {}", cli.source);
-    println!("Relay:   {}", cli.relay);
-    println!("Token:   {}...{}", &cli.token[..cli.token.len().min(8)], &cli.token[cli.token.len().saturating_sub(4)..]);
+    println!("Relay:   {}", relay);
+    println!("Token:   {}...{}", &token[..token.len().min(8)], &token[token.len().saturating_sub(4)..]);
     println!();
 
     println!("[1/4] Relay reachable?");
-    match check_relay_health(client, &cli.relay).await {
+    match check_relay_health(client, relay).await {
         Ok(()) => println!("       OK"),
         Err(e) => {
             println!("       FAIL: {}", e);
@@ -297,7 +337,7 @@ async fn run_doctor(
     }
 
     println!("[2/4] Token accepted by relay?");
-    match check_relay_auth(client, &cli.relay, &cli.token).await {
+    match check_relay_auth(client, relay, token).await {
         Ok(n) => println!("       OK (relay reports {} machine(s) for this token)", n),
         Err(e) => {
             println!("       FAIL: {}", e);
@@ -422,9 +462,40 @@ async fn main() {
     });
     let plugins_dir = cli.plugins_dir.clone().unwrap_or_else(|| data_dir.join("plugins"));
 
+    // Resolve token & relay: explicit flags take priority; otherwise fall back
+    // to the saved config from a previous run (so `openusage-agent --check`
+    // works without retyping anything).
+    let saved = load_config(&data_dir);
+    let token = cli
+        .token
+        .clone()
+        .or_else(|| saved.as_ref().map(|c| c.token.clone()));
+    let relay = cli
+        .relay
+        .clone()
+        .or_else(|| saved.as_ref().map(|c| c.relay.clone()));
+
+    let token = match token {
+        Some(t) => t,
+        None => {
+            eprintln!("error: --token required (or run from a directory with a saved config)");
+            std::process::exit(2);
+        }
+    };
+    let relay = match relay {
+        Some(r) => r,
+        None => {
+            eprintln!("error: --relay required (or run from a directory with a saved config)");
+            std::process::exit(2);
+        }
+    };
+
+    // Persist for next run (so --check works without flags)
+    save_config(&data_dir, &token, &relay);
+
     log::info!(
         "openusage-agent starting: machine={}, relay={}, source={}, interval={}s",
-        machine_name, cli.relay, cli.source, cli.interval
+        machine_name, relay, cli.source, cli.interval
     );
 
     // Extract bundled plugins on first run (probe mode only)
@@ -443,7 +514,7 @@ async fn main() {
 
     // One-shot diagnostic mode
     if cli.check {
-        let code = run_doctor(&cli, &client, &plugins_dir, &data_dir).await;
+        let code = run_doctor(&cli, &token, &relay, &client, &plugins_dir, &data_dir).await;
         std::process::exit(code);
     }
 
@@ -501,7 +572,7 @@ async fn main() {
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
         };
 
-        match push_to_relay(&client, &cli.relay, &cli.token, &push).await {
+        match push_to_relay(&client, &relay, &token, &push).await {
             Ok(()) => log::info!("pushed to relay"),
             Err(e) => log::error!("push failed: {}", e),
         }
