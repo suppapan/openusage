@@ -314,16 +314,22 @@ jobs:
             echo "::warning::No bundle dir at $BUNDLE_DIR"
           fi
           mkdir -p release-assets
-          # Copy installers / images if present
+          # Copy installers / images if present, renaming aarch64 -> arm64 on macOS
           if [ -d "$BUNDLE_DIR" ]; then
-            find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
+            while IFS= read -r src; do
+              base=$(basename "$src")
+              if [[ "${{ runner.os }}" == "macOS" ]]; then
+                base="${base//aarch64/arm64}"
+              fi
+              cp -v "$src" "release-assets/$base"
+            done < <(find "$BUNDLE_DIR" -maxdepth 3 -type f \( \
               -name '*.dmg' \
               -o -name '*.msi' \
               -o -name '*-setup.exe' \
               -o -name '*.deb' \
               -o -name '*.rpm' \
               -o -name '*.AppImage' \
-            \) -exec cp -v {} release-assets/ \;
+            \))
           fi
           # Zip up the .app bundle for macOS (unsigned builds skip DMG creation)
           if [[ "${{ runner.os }}" == "macOS" && -d "$BUNDLE_DIR/macos" ]]; then
@@ -334,6 +340,10 @@ jobs:
             if [ -n "$APP_DIR" ]; then
               ARCH_SUFFIX="${{ matrix.rust_targets }}"
               ARCH_SUFFIX="${ARCH_SUFFIX%-apple-darwin}"
+              # Rename aarch64 -> arm64 for clarity on macOS
+              if [[ "$ARCH_SUFFIX" == "aarch64" ]]; then
+                ARCH_SUFFIX="arm64"
+              fi
               APP_NAME=$(basename "$APP_DIR" .app)
               ZIP_NAME="${APP_NAME}_${ARCH_SUFFIX}.app.zip"
               echo "Zipping $APP_DIR -> release-assets/$ZIP_NAME"

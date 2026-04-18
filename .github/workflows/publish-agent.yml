@@ -25,7 +25,7 @@ jobs:
             binary_name: openusage-agent
           - platform: macos-latest
             target: aarch64-apple-darwin
-            asset_name: openusage-agent-macos-aarch64
+            asset_name: openusage-agent-macos-arm64
             binary_name: openusage-agent
           - platform: windows-latest
             target: x86_64-pc-windows-msvc

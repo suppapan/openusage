@@ -55,7 +55,10 @@ esac
 
 case "$ARCH" in
   x86_64|amd64)  ARCH_TAG="x86_64" ;;
-  arm64|aarch64) ARCH_TAG="aarch64" ;;
+  arm64|aarch64)
+    # Use 'arm64' suffix on macOS, 'aarch64' on Linux (matches release naming)
+    if [[ "$PLATFORM" == "macos" ]]; then ARCH_TAG="arm64"; else ARCH_TAG="aarch64"; fi
+    ;;
   *) echo "Unsupported arch: $ARCH"; exit 1 ;;
 esac
 
